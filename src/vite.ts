@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 
 // For CommonJS, use __dirname directly
-const __dirname = path.resolve();
+const viteDir = path.resolve();
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -17,7 +17,7 @@ export function log(message: string, source = "express") {
 }
 
 export function serveStatic(app: Express) {
-  const distPath = path.resolve(__dirname, "public");
+  const distPath = path.resolve(viteDir, "public");
 
   if (!fs.existsSync(distPath)) {
     console.warn(`Build directory not found: ${distPath}. Skipping static file serving.`);
