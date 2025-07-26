@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: referral-app-backend
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: referral-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: MPESA_CONSUMER_KEY
+        sync: false
+      - key: MPESA_CONSUMER_SECRET
+        sync: false
+      - key: MPESA_BUSINESS_SHORT_CODE
+        sync: false
+      - key: MPESA_PASS_KEY
+        sync: false
+      - key: MPESA_CALLBACK_URL
+        value: https://your-backend-app.onrender.com/api/mpesa/callback
+      - key: MPESA_ACCOUNT_REFERENCE
+        value: MoneyQash
+      - key: MPESA_ACTIVATION_FEE
+        value: 500
+
+databases:
+  - name: referral-db
+    databaseName: referral_app
+    user: referral_user
