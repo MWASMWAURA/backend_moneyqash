@@ -306,7 +306,7 @@ export class DrizzleStorage implements IStorage {
       taskEarnings.youtube + 
       taskEarnings.instagram;
 
-    const referralLink = `${process.env.APP_URL || "http://localhost:5000"}/register?ref=${user.username}&uid=${userId}`;
+    const referralLink = `${process.env.FRONTEND_URL || "http://localhost:5000"}/register?ref=${user.username}&uid=${userId}`;
 
     return {
       accountBalance, // This is mainly referral balance
