@@ -372,6 +372,7 @@ app.post("/api/referrals", async (req, res) => {
     const level1ReferralData = insertReferralSchema.parse({
       referrerId,
       referredId: newUser.id,
+      referredUsername: newUser.username,
       level: 1,
       amount: 0, // Will be updated when user activates
       isActive: false
@@ -388,6 +389,7 @@ app.post("/api/referrals", async (req, res) => {
       const level2ReferralData = insertReferralSchema.parse({
         referrerId: level1ReferrerAsReferredUser.referrerId, // The person who referred the level 1 referrer
         referredId: newUser.id,
+        referredUsername: newUser.username,
         level: 2,
         amount: 0, // Will be updated when user activates
         isActive: false
@@ -717,11 +719,12 @@ async function processReferralRewards(activatedUserId: number) {
           if (activeDirectReferrals.length === 0) {
             rewardAmount = 300; // First referral
           } else {
-            rewardAmount = 150; // Additional referrals
+            rewardAmount = 270; // Additional referrals
           }
         } else if (referral.level === 2) {
           // Level 2 referral rewards (fixed amount)
-          rewardAmount = 50; // Level 2 referral reward
+          rewardAmount = 150; // Level 2 referral reward
+          console.log(`[LEVEL2-REWARD] Processing level 2 reward for referrerId=${referral.referrerId}, referredId=${referral.referredId}`);
         }
         
         if (rewardAmount > 0) {
