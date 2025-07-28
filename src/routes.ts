@@ -331,87 +331,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Register referral
-  app.post("/api/referrals", async (req, res) => {
-    if (!req.isAuthenticated()) {
-      return res.status(401).json({ message: "Unauthorized" });
+ // Register referral
+app.post("/api/referrals", async (req, res) => {
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  
+  try {
+    const { referrerId, uid } = req.body;
+    const referringUser = await storage.getUser(parseInt(uid));
+    
+    if (!referringUser || !referringUser.isActivated || referringUser.id !== parseInt(uid)) {
+      return res.status(400).json({ message: "Invalid or inactive referrer" });
     }
     
-    try {
-      const { referrerId, uid } = req.body;
-      const referringUser = await storage.getUser(parseInt(uid));
-      
-      if (!referringUser || !referringUser.isActivated || referringUser.id !== parseInt(uid)) {
-        return res.status(400).json({ message: "Invalid or inactive referrer" });
-      }
-      
-      const { username, password, fullName, phone } = req.body;
-      const existingUser = await storage.getUserByUsername(username);
-      
-      if (existingUser) {
-        return res.status(400).json({ message: "Username already exists" });
-      }
-      
-      // Generate a unique referral code (6-character alphanumeric)
-      const generateReferralCode = () => {
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-        let result = '';
-        for (let i = 0; i < 6; i++) {
-          result += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        return result;
-      };
-      let referralCode = generateReferralCode();
-      // Ensure referral code is unique
-      while (await storage.getUserByReferralCode(referralCode)) {
-        referralCode = generateReferralCode();
-      }
-      const newUser = await storage.createUser({ username, password, fullName, phone, referralCode });
-      
-      // Get referrer's referrals to determine commission amount
-      const referrerReferrals = await storage.getReferralsByReferrerId(referrerId);
-      const directReferrals = referrerReferrals.filter((r: any) => r.level === 1);
-      
-      let amount = 0;
-      if (directReferrals.length === 0) {
-        amount = 300; // First referral
-      } else if (directReferrals.length === 1) {
-        amount = 150; // Second referral
-      }
-      
-      if (amount > 0) {
-        // Create referral record
-        const referralData = insertReferralSchema.parse({
-          referrerId,
-          referredId: newUser.id,
-          level: 1, // direct referral
-          amount
-        });
-        
-        await storage.createReferral(referralData);
-        
-        // Create earning record
-        const earningData = insertEarningSchema.parse({
-          userId: referrerId,
-          source: 'referral',
-          amount
-        });
-        
-        await storage.createEarning(earningData);
-        
-        // Update referrer's account balance - handle null account balance
-        const currentBalance = referringUser.accountBalance || 0;
-        await storage.updateUser(referrerId, {
-          accountBalance: currentBalance + amount
-        });
-      }
-      
-      return res.status(201).json({ message: "Referral registered successfully" });
-    } catch (error) {
-      return res.status(500).json({ message: "Failed to register referral" });
+    const { username, password, fullName, phone } = req.body;
+    const existingUser = await storage.getUserByUsername(username);
+    
+    if (existingUser) {
+      return res.status(400).json({ message: "Username already exists" });
     }
-  });
-
+    
+    // Generate a unique referral code (6-character alphanumeric)
+    const generateReferralCode = () => {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      let result = '';
+      for (let i = 0; i < 6; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return result;
+    };
+    let referralCode = generateReferralCode();
+    // Ensure referral code is unique
+    while (await storage.getUserByReferralCode(referralCode)) {
+      referralCode = generateReferralCode();
+    }
+    const newUser = await storage.createUser({ username, password, fullName, phone, referralCode });
+    
+    // Create level 1 referral record (always created, but reward only when activated)
+    const level1ReferralData = insertReferralSchema.parse({
+      referrerId,
+      referredId: newUser.id,
+      level: 1,
+      amount: 0, // Will be updated when user activates
+      isActive: false
+    });
+    
+    await storage.createReferral(level1ReferralData);
+    
+    // Check if level 1 referrer has a referrer (for level 2)
+    const level1ReferrerReferrals = await storage.getReferralsByReferredId(referrerId);
+    const level1ReferrerDirectReferral = level1ReferrerReferrals.find((r: any) => r.level === 1);
+    
+    if (level1ReferrerDirectReferral) {
+      // Create level 2 referral record
+      const level2ReferralData = insertReferralSchema.parse({
+        referrerId: level1ReferrerDirectReferral.referrerId,
+        referredId: newUser.id,
+        level: 2,
+        amount: 0, // Will be updated when user activates
+        isActive: false
+      });
+      
+      await storage.createReferral(level2ReferralData);
+    }
+    
+    return res.status(201).json({ message: "Referral registered successfully" });
+  } catch (error) {
+    console.error("Referral registration error:", error);
+    return res.status(500).json({ message: "Failed to register referral" });
+  }
+});
   // Create task
   app.post("/api/tasks", async (req, res) => {
     if (!req.isAuthenticated()) {
@@ -699,34 +689,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Helper function to process referral rewards after activation
-  async function processReferralRewards(activatedUserId: number) {
-    try {
-      console.log(`[REFERRAL_REWARDS] Processing rewards for activated user: ${activatedUserId}`);
-      // Find all referrals where this user was referred
-      const referrals = await storage.getReferralsByReferredId(activatedUserId);
-      
-      for (const referral of referrals) {
-        if (referral.level === 1 && !referral.isActive) {
-          console.log(`[REFERRAL_REWARDS] Processing level 1 referral for referrer: ${referral.referrerId}`);
-          // Get referrer info
-          const referrer = await storage.getUser(referral.referrerId);
-          if (!referrer) {
-            console.error(`[REFERRAL_REWARDS] Referrer not found: ${referral.referrerId}`);
-            continue;
-          }
-          
-          // Get referrer's existing referrals to determine reward amount
+async function processReferralRewards(activatedUserId: number) {
+  try {
+    console.log(`[REFERRAL_REWARDS] Processing rewards for activated user: ${activatedUserId}`);
+    // Find all referrals where this user was referred
+    const referrals = await storage.getReferralsByReferredId(activatedUserId);
+    
+    for (const referral of referrals) {
+      if (!referral.isActive) {
+        console.log(`[REFERRAL_REWARDS] Processing level ${referral.level} referral for referrer: ${referral.referrerId}`);
+        
+        // Get referrer info
+        const referrer = await storage.getUser(referral.referrerId);
+        if (!referrer) {
+          console.error(`[REFERRAL_REWARDS] Referrer not found: ${referral.referrerId}`);
+          continue;
+        }
+        
+        let rewardAmount = 0;
+        
+        if (referral.level === 1) {
+          // Level 1 referral rewards
           const referrerReferrals = await storage.getReferralsByReferrerId(referral.referrerId);
           const activeDirectReferrals = referrerReferrals.filter((r: any) => r.level === 1 && r.isActive);
           
-          let rewardAmount = 0;
           if (activeDirectReferrals.length === 0) {
             rewardAmount = 300; // First referral
           } else {
             rewardAmount = 150; // Additional referrals
           }
-          
-          console.log(`[REFERRAL_REWARDS] Reward amount: ${rewardAmount} for referrer: ${referrer.username}`);
+        } else if (referral.level === 2) {
+          // Level 2 referral rewards (fixed amount)
+          rewardAmount = 50; // Level 2 referral reward
+        }
+        
+        if (rewardAmount > 0) {
+          console.log(`[REFERRAL_REWARDS] Reward amount: ${rewardAmount} for level ${referral.level} referrer: ${referrer.username}`);
           
           // Update referral record
           if (typeof storage.updateReferral === 'function') {
@@ -743,7 +741,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             userId: referrer.id,
             source: 'referral',
             amount: rewardAmount,
-            description: `Referral reward for ${referral.referredUsername} activation`
+            description: `Level ${referral.level} referral reward for user activation`
           });
           
           // Update referrer's account balance
@@ -752,14 +750,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             accountBalance: currentBalance + rewardAmount
           });
           
-          console.log(`[REFERRAL_REWARDS] Reward processed: ${rewardAmount} for referrer: ${referrer.username}`);
+          console.log(`[REFERRAL_REWARDS] Level ${referral.level} reward processed: ${rewardAmount} for referrer: ${referrer.username}`);
         }
       }
-    } catch (error) {
-      console.error(`[REFERRAL_REWARDS] Error processing rewards for user ${activatedUserId}:`, error);
     }
+  } catch (error) {
+    console.error(`[REFERRAL_REWARDS] Error processing rewards for user ${activatedUserId}:`, error);
   }
-
+}
   const httpServer = createServer(app);
   return httpServer;
 }
