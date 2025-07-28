@@ -331,7 +331,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
- // Register referral
+ // Register referral - REPLACE THE ENTIRE /api/referrals POST route
 app.post("/api/referrals", async (req, res) => {
   if (!req.isAuthenticated()) {
     return res.status(401).json({ message: "Unauthorized" });
@@ -379,14 +379,14 @@ app.post("/api/referrals", async (req, res) => {
     
     await storage.createReferral(level1ReferralData);
     
-    // Check if level 1 referrer has a referrer (for level 2)
+    // FIXED: Check if the level 1 referrer was also referred by someone (for level 2)
     const level1ReferrerReferrals = await storage.getReferralsByReferredId(referrerId);
-    const level1ReferrerDirectReferral = level1ReferrerReferrals.find((r: any) => r.level === 1);
+    const level1ReferrerAsReferredUser = level1ReferrerReferrals.find((r: any) => r.level === 1);
     
-    if (level1ReferrerDirectReferral) {
-      // Create level 2 referral record
+    if (level1ReferrerAsReferredUser) {
+      // The level 1 referrer was referred by someone, so create level 2 referral
       const level2ReferralData = insertReferralSchema.parse({
-        referrerId: level1ReferrerDirectReferral.referrerId,
+        referrerId: level1ReferrerAsReferredUser.referrerId, // The person who referred the level 1 referrer
         referredId: newUser.id,
         level: 2,
         amount: 0, // Will be updated when user activates
@@ -394,6 +394,7 @@ app.post("/api/referrals", async (req, res) => {
       });
       
       await storage.createReferral(level2ReferralData);
+      console.log(`[REFERRAL] Created level 2 referral: Level2Referrer(${level1ReferrerAsReferredUser.referrerId}) -> NewUser(${newUser.id})`);
     }
     
     return res.status(201).json({ message: "Referral registered successfully" });
@@ -688,7 +689,7 @@ app.post("/api/referrals", async (req, res) => {
     }
   });
 
-  // Helper function to process referral rewards after activation
+// Helper function to process referral rewards after activation
 async function processReferralRewards(activatedUserId: number) {
   try {
     console.log(`[REFERRAL_REWARDS] Processing rewards for activated user: ${activatedUserId}`);
@@ -727,14 +728,10 @@ async function processReferralRewards(activatedUserId: number) {
           console.log(`[REFERRAL_REWARDS] Reward amount: ${rewardAmount} for level ${referral.level} referrer: ${referrer.username}`);
           
           // Update referral record
-          if (typeof storage.updateReferral === 'function') {
-            await storage.updateReferral(referral.id, {
-              isActive: true,
-              amount: rewardAmount
-            });
-          } else {
-            console.warn('[REFERRAL_REWARDS] storage.updateReferral is not implemented!');
-          }
+          await storage.updateReferral(referral.id, {
+            isActive: true,
+            amount: rewardAmount
+          });
           
           // Create earning record
           await storage.createEarning({
