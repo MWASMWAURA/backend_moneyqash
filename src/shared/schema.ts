@@ -11,6 +11,7 @@ export const users = pgTable("users", {
   withdrawalPhone: text("withdrawal_phone"),
   isActivated: boolean("is_activated").default(false).notNull(),
   accountBalance: integer("account_balance").default(0).notNull(),
+  referralCode: text("referral_code").notNull().unique(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -20,30 +21,21 @@ export const insertUserSchema = createInsertSchema(users).pick({
   fullName: true,
   phone: true,
   withdrawalPhone: true,
+  referralCode: true,
 });
 
 export const referrals = pgTable("referrals", {
   id: serial("id").primaryKey(),
   referrerId: integer("referrer_id").notNull().references(() => users.id),
   referredId: integer("referred_id").notNull().references(() => users.id),
-  level: integer("level").notNull(), // 1 for direct, 2 for secondary
-  amount: integer("amount").notNull(),
+  referredUsername: varchar("referred_username", { length: 255 }).notNull(),
+  level: integer("level").notNull().default(1),
+  amount: integer("amount").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  // Additional fields for display
-  referredUsername: text("referred_username"),
-  referredFullName: text("referred_full_name"),
-  isActive: boolean("is_active").default(false),
 });
 
-export const insertReferralSchema = createInsertSchema(referrals).pick({
-  referrerId: true,
-  referredId: true,
-  level: true,
-  amount: true,
-  referredUsername: true,
-  referredFullName: true,
-  isActive: true,
-});
+export const insertReferralSchema = createInsertSchema(referrals);
 
 export const availableTasks = pgTable("available_tasks", {
   id: serial("id").primaryKey(),
@@ -145,7 +137,7 @@ export const mpesaTransactions = pgTable("mpesa_transactions", {
 
 export const insertMpesaTransactionSchema = createInsertSchema(mpesaTransactions);
 
-// FIXED: Use table inference instead of z.infer for better compatibility
+// Type definitions using table inference for better compatibility
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
@@ -166,6 +158,8 @@ export type InsertWithdrawal = typeof withdrawals.$inferInsert;
 
 export type MpesaTransaction = typeof mpesaTransactions.$inferSelect;
 export type InsertMpesaTransaction = typeof mpesaTransactions.$inferInsert;
+
+// Custom types for API responses
 export type UserStats = {
   accountBalance: number;
   totalProfit: number;
@@ -179,3 +173,19 @@ export type UserStats = {
     instagram: number;
   };
 };
+
+// API response types for frontend consumption
+export type ApiResponse<T = any> = {
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+};
+
+export type UserResponse = ApiResponse<User>;
+export type UserStatsResponse = ApiResponse<UserStats>;
+export type TasksResponse = ApiResponse<Task[]>;
+export type AvailableTasksResponse = ApiResponse<AvailableTask[]>;
+export type EarningsResponse = ApiResponse<Earning[]>;
+export type WithdrawalsResponse = ApiResponse<Withdrawal[]>;
+export type ReferralsResponse = ApiResponse<Referral[]>;

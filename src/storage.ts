@@ -21,13 +21,14 @@ import { Pool } from "pg";
 import { NodePgDatabase, drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./shared/schema";
 import PgSession from "connect-pg-simple";
-import { eq, desc, count, and } from "drizzle-orm";
+import { eq, desc, sum, count, and } from "drizzle-orm";
 
 // modify the interface with CRUD methods needed
 export interface IStorage {
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
+  getUserByReferralCode(referralCode: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: number, userData: Partial<User>): Promise<User | undefined>;
   updateUserContact(id: number, phone: string, withdrawalPhone: string): Promise<User | undefined>;
@@ -37,6 +38,7 @@ export interface IStorage {
   createReferral(referral: InsertReferral): Promise<Referral>;
   getReferralsByReferrerId(referrerId: number): Promise<Referral[]>;
   getReferralsByReferredId(referredId: number): Promise<Referral[]>;
+  updateReferral(id: number, data: Partial<Referral>): Promise<Referral | undefined>;
 
   // Available Task operations
   getAvailableTasks(): Promise<AvailableTask[]>;
@@ -56,14 +58,14 @@ export interface IStorage {
   createWithdrawal(withdrawal: InsertWithdrawal): Promise<Withdrawal>;
   getWithdrawalsByUserId(userId: number): Promise<Withdrawal[]>;
 
+  // Stats operations
+  getUserStats(userId: number): Promise<UserStats>;
+
   // M-Pesa Transaction operations
   createMpesaTransaction(transaction: InsertMpesaTransaction): Promise<MpesaTransaction>;
   updateMpesaTransaction(id: number, data: Partial<MpesaTransaction>): Promise<MpesaTransaction | undefined>;
   getMpesaTransactionByCheckoutId(checkoutRequestId: string): Promise<MpesaTransaction | undefined>;
   getMpesaTransactionsByUserId(userId: number): Promise<MpesaTransaction[]>;
-
-  // Stats operations
-  getUserStats(userId: number): Promise<UserStats>;
 
   // Session store
   sessionStore: session.Store;
@@ -140,6 +142,11 @@ export class DrizzleStorage implements IStorage {
     return result[0];
   }
 
+  async getUserByReferralCode(referralCode: string): Promise<User | undefined> {
+    const result = await this.db.select().from(users).where(eq(users.referralCode, referralCode)).limit(1);
+    return result[0];
+  }
+
   async createUser(insertUser: InsertUser): Promise<User> {
     const validatedUser = insertUserSchema.parse(insertUser);
     const result = await this.db.insert(users).values(validatedUser).returning();
@@ -174,6 +181,11 @@ export class DrizzleStorage implements IStorage {
 
   async getReferralsByReferredId(referredId: number): Promise<Referral[]> {
     return this.db.select().from(referrals).where(eq(referrals.referredId, referredId)).orderBy(desc(referrals.createdAt));
+  }
+
+  async updateReferral(id: number, data: Partial<Referral>): Promise<Referral | undefined> {
+    const result = await this.db.update(referrals).set(data).where(eq(referrals.id, id)).returning();
+    return result[0];
   }
 
   // Available Task operations
@@ -269,26 +281,40 @@ export class DrizzleStorage implements IStorage {
       throw new Error("User not found");
     }
 
+    // Count ACTIVE direct referrals only
     const directReferralsResult = await this.db
       .select({ value: count() })
       .from(referrals)
-      .where(and(eq(referrals.referrerId, userId), eq(referrals.level, 1)));
+      .where(
+        and(
+          eq(referrals.referrerId, userId),
+          eq(referrals.level, 1),
+          eq(referrals.isActive, true)
+        )
+      );
     const directReferrals = directReferralsResult[0]?.value || 0;
-    
+
+    // Count ACTIVE secondary referrals only
     const secondaryReferralsResult = await this.db
       .select({ value: count() })
       .from(referrals)
-      .where(and(eq(referrals.referrerId, userId), eq(referrals.level, 2)));
+      .where(
+        and(
+          eq(referrals.referrerId, userId),
+          eq(referrals.level, 2),
+          eq(referrals.isActive, true)
+        )
+      );
     const secondaryReferrals = secondaryReferralsResult[0]?.value || 0;
 
     const userEarnings = await this.getEarningsByUserId(userId);
 
     const sumEarningsBySource = (source: string): number => {
-        return userEarnings
-            .filter(e => e.source === source && e.amount > 0) // only positive earnings for task earnings
-            .reduce((acc, curr) => acc + curr.amount, 0);
+      return userEarnings
+        .filter(e => e.source === source && e.amount > 0) // only positive earnings for task earnings
+        .reduce((acc, curr) => acc + curr.amount, 0);
     };
-    
+
     const taskEarnings = {
       ads: sumEarningsBySource('ad'),
       tiktok: sumEarningsBySource('tiktok'),
@@ -296,26 +322,40 @@ export class DrizzleStorage implements IStorage {
       instagram: sumEarningsBySource('instagram')
     };
 
+    const totalReferralEarnings = userEarnings
+      .filter(e => e.source === 'referral' && e.amount > 0)
+      .reduce((acc, curr) => acc + curr.amount, 0);
+
     // Total profit is account balance (which should reflect referral earnings) + task earnings
     // Account balance in the user table is primarily for referral commissions.
     // Task earnings are tracked separately and summed up.
-    const accountBalance = user.accountBalance || 0;
-    const totalProfit = accountBalance + 
-      taskEarnings.ads + 
-      taskEarnings.tiktok + 
-      taskEarnings.youtube + 
+    const totalProfit = user.accountBalance +
+      taskEarnings.ads +
+      taskEarnings.tiktok +
+      taskEarnings.youtube +
       taskEarnings.instagram;
 
-    const referralLink = `${process.env.FRONTEND_URL || "http://localhost:5000"}/register?ref=${user.username}&uid=${userId}`;
+    // Use referralCode instead of username in the referral link for better security
+    const referralLink = `${process.env.FRONTEND_URL || "http://localhost:5000"}/register?code=${user.referralCode}`;
 
     return {
-      accountBalance, // This is mainly referral balance
+      accountBalance: user.accountBalance,
       totalProfit,
       directReferrals,
       secondaryReferrals,
       referralLink,
       taskEarnings
     };
+  }
+
+  // Also add this method to create referrals with referredUsername:
+  async createReferralWithUsernames(referral: InsertReferral & { referredUsername: string }): Promise<Referral> {
+    const validatedReferral = insertReferralSchema.parse({
+      ...referral,
+      referredUsername: referral.referredUsername
+    });
+    const result = await this.db.insert(referrals).values(validatedReferral).returning();
+    return result[0];
   }
 }
 

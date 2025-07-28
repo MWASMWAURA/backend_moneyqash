@@ -5,6 +5,7 @@ import session from "express-session";
 import bcrypt from "bcryptjs";
 import { storage } from "./storage.js";
 import { User as SelectUser } from "./shared/schema.js";
+import crypto from "crypto";
 
 declare global {
   namespace Express {
@@ -19,6 +20,11 @@ async function hashPassword(password: string): Promise<string> {
 
 async function comparePasswords(supplied: string, storedHash: string): Promise<boolean> {
   return bcrypt.compare(supplied, storedHash);
+}
+
+// Generate a unique referral code
+function generateReferralCode(): string {
+  return crypto.randomBytes(4).toString('hex').toUpperCase();
 }
 
 export function setupAuth(app: Express): void {
@@ -64,35 +70,113 @@ export function setupAuth(app: Express): void {
     }
   });
 
+  // Validate referral code endpoint
+  app.get("/api/validate-referral/:code", async (req, res) => {
+    try {
+      const { code } = req.params;
+      console.log("[VALIDATE] Checking referral code:", code);
+      
+      const referrer = await storage.getUserByReferralCode(code);
+      if (!referrer) {
+        console.log("[VALIDATE] Invalid referral code:", code);
+        return res.status(404).json({ 
+          valid: false, 
+          message: "Invalid referral code" 
+        });
+      }
+
+      console.log("[VALIDATE] Valid referral code:", code, "Referrer:", referrer.username);
+      return res.json({ 
+        valid: true, 
+        referrer: {
+          id: referrer.id,
+          username: referrer.username,
+          fullName: referrer.fullName,
+          isActivated: referrer.isActivated
+        }
+      });
+    } catch (error) {
+      console.error("[VALIDATE] Error validating referral code:", error);
+      return res.status(500).json({ 
+        valid: false, 
+        message: "Error validating referral code" 
+      });
+    }
+  });
+
   app.post("/api/register", async (req, res, next) => {
     try {
-      const { username, password, fullName, phone } = req.body;
+      const { username, password, fullName, phone, referralCode } = req.body;
       
       if (!username || !password || !fullName) {
         return res.status(400).json({ message: "Missing required fields" });
       }
       
+      // Check if username already exists
       const existingUser = await storage.getUserByUsername(username);
       if (existingUser) {
         return res.status(400).json({ message: "Username already exists" });
       }
 
-      const hashedPassword = await hashPassword(password);
-      const user = await storage.createUser({
+      // Hash password
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      // Generate unique referral code (6-character alphanumeric)
+      const generateReferralCode = () => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let result = '';
+        for (let i = 0; i < 6; i++) {
+          result += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return result;
+      };
+      let newReferralCode = generateReferralCode();
+      // Ensure referral code is unique
+      while (await storage.getUserByReferralCode(newReferralCode)) {
+        newReferralCode = generateReferralCode();
+      }
+
+      // Create new user
+      const newUser = await storage.createUser({
         username,
         password: hashedPassword,
         fullName,
-        phone
+        phone,
+        referralCode: newReferralCode,
+        isActivated: false,
+        accountBalance: 0
       });
 
-      req.login(user, (err) => {
-        if (err) return next(err);
-        // Return user without password
-        const { password: _, ...userWithoutPassword } = user;
-        return res.status(201).json(userWithoutPassword);
+      // Handle referral if provided
+      if (referralCode) {
+        const referrer = await storage.getUserByReferralCode(referralCode.toUpperCase());
+        if (referrer) {
+          // Create referral record (inactive until user activates)
+          await storage.createReferral({
+            referrerId: referrer.id,
+            referredId: newUser.id,
+            level: 1,
+            amount: 0, // Will be set when user activates
+            isActive: false,
+            referredUsername: newUser.username
+          });
+          console.log(`[REGISTER] Referral registered: ${referrer.username} -> ${newUser.username}`);
+        }
+      }
+
+      // Log user in
+      req.login(newUser, (err) => {
+        if (err) {
+          console.error("Login error after registration:", err);
+          return res.status(500).json({ message: "Registration successful but login failed" });
+        }
+        const { password: _, ...userWithoutPassword } = newUser;
+        return res.json(userWithoutPassword);
       });
-    } catch (err) {
-      return next(err);
+      return;
+    } catch (error) {
+      console.error("Registration error:", error);
+      return res.status(500).json({ message: "Registration failed" });
     }
   });
 

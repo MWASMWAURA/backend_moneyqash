@@ -7,7 +7,9 @@ import { initiateSTKPush } from "./mpesa.js";
 import { 
   insertReferralSchema, 
   insertEarningSchema, 
-  insertWithdrawalSchema
+  insertWithdrawalSchema,
+  insertTaskSchema,
+  insertAvailableTaskSchema
 } from "./shared/schema.js";
 import { z } from "zod";
 
@@ -316,6 +318,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.status(400).json({ message: "Invalid activation request" });
   });
 
+  // Get all referrals for the current user (as referrer)
+  app.get("/api/user/referrals", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    try {
+      const referrals = await storage.getReferralsByReferrerId(req.user.id);
+      return res.json(referrals);
+    } catch (error) {
+      return res.status(500).json({ message: "Failed to fetch referrals" });
+    }
+  });
+
   // Register referral
   app.post("/api/referrals", async (req, res) => {
     if (!req.isAuthenticated()) {
@@ -337,7 +352,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Username already exists" });
       }
       
-      const newUser = await storage.createUser({ username, password, fullName, phone });
+      // Generate a unique referral code (6-character alphanumeric)
+      const generateReferralCode = () => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let result = '';
+        for (let i = 0; i < 6; i++) {
+          result += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return result;
+      };
+      let referralCode = generateReferralCode();
+      // Ensure referral code is unique
+      while (await storage.getUserByReferralCode(referralCode)) {
+        referralCode = generateReferralCode();
+      }
+      const newUser = await storage.createUser({ username, password, fullName, phone, referralCode });
       
       // Get referrer's referrals to determine commission amount
       const referrerReferrals = await storage.getReferralsByReferrerId(referrerId);
@@ -460,6 +489,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         source: z.string(),
         amount: z.number().min(600),
         paymentMethod: z.string(),
+        phoneNumber: z.string().optional(),
       });
       
       const result = withdrawalSchema.safeParse(req.body);
@@ -467,7 +497,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid request data", errors: result.error.format() });
       }
       
-      const { source, amount, paymentMethod } = req.body;
+      const { source, amount, paymentMethod, phoneNumber } = req.body;
       const userId = req.user.id;
       const user = req.user;
       
@@ -500,7 +530,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         amount,
         fee,
         status: 'completed', // Simulating immediate completion
-        paymentMethod
+        paymentMethod,
+        phoneNumber
       });
 
       const withdrawal = await storage.createWithdrawal(withdrawalData);
@@ -583,7 +614,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (ResultCode === 0) {
         // Payment was successful
         console.log("Payment successful. Processing activation...");
-        // Extract paid amount from CallbackMetadata
+        
+        // Extract and validate paid amount from CallbackMetadata
         let paidAmount = null;
         if (CallbackMetadata && Array.isArray(CallbackMetadata.Item)) {
           const amountItem = CallbackMetadata.Item.find((item: any) => item.Name === 'Amount');
@@ -594,6 +626,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.error("Could not extract paid amount from CallbackMetadata");
           return res.status(400).json({ ResultCode: 1, ResultDesc: "Could not extract paid amount" });
         }
+        
         if (Number(paidAmount) !== Number(transaction.amount)) {
           console.error(`Paid amount (${paidAmount}) does not match expected amount (${transaction.amount}) for CheckoutRequestID: ${CheckoutRequestID}`);
           await storage.updateMpesaTransaction(transaction.id, { status: 'failed', resultDesc: 'Amount mismatch' });
@@ -604,9 +637,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (userIdToActivate) {
           console.log(`Found pending activation for UserID: ${userIdToActivate} with CheckoutRequestID: ${CheckoutRequestID}`);
           try {
+            // Activate the user
             const updatedUser = await storage.updateUser(userIdToActivate, { isActivated: true });
             if (updatedUser) {
               console.log(`User ${userIdToActivate} successfully activated.`);
+              // Process referral rewards now that user is activated
+              await processReferralRewards(userIdToActivate);
+              // Remove from pending map
               pendingActivationsMap.delete(CheckoutRequestID);
             } else {
               console.error(`Failed to update user ${userIdToActivate} to activated status in storage.`);
@@ -637,6 +674,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               accountBalance: 0
             });
             console.log(`User ${userId} payment failed, status updated`);
+            // Remove from pending map
+            pendingActivationsMap.delete(CheckoutRequestID);
           }
         } catch (updateError) {
           console.error(`Failed to update user status after payment failure:`, updateError);
@@ -658,6 +697,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
+
+  // Helper function to process referral rewards after activation
+  async function processReferralRewards(activatedUserId: number) {
+    try {
+      console.log(`[REFERRAL_REWARDS] Processing rewards for activated user: ${activatedUserId}`);
+      // Find all referrals where this user was referred
+      const referrals = await storage.getReferralsByReferredId(activatedUserId);
+      
+      for (const referral of referrals) {
+        if (referral.level === 1 && !referral.isActive) {
+          console.log(`[REFERRAL_REWARDS] Processing level 1 referral for referrer: ${referral.referrerId}`);
+          // Get referrer info
+          const referrer = await storage.getUser(referral.referrerId);
+          if (!referrer) {
+            console.error(`[REFERRAL_REWARDS] Referrer not found: ${referral.referrerId}`);
+            continue;
+          }
+          
+          // Get referrer's existing referrals to determine reward amount
+          const referrerReferrals = await storage.getReferralsByReferrerId(referral.referrerId);
+          const activeDirectReferrals = referrerReferrals.filter((r: any) => r.level === 1 && r.isActive);
+          
+          let rewardAmount = 0;
+          if (activeDirectReferrals.length === 0) {
+            rewardAmount = 300; // First referral
+          } else {
+            rewardAmount = 150; // Additional referrals
+          }
+          
+          console.log(`[REFERRAL_REWARDS] Reward amount: ${rewardAmount} for referrer: ${referrer.username}`);
+          
+          // Update referral record
+          if (typeof storage.updateReferral === 'function') {
+            await storage.updateReferral(referral.id, {
+              isActive: true,
+              amount: rewardAmount
+            });
+          } else {
+            console.warn('[REFERRAL_REWARDS] storage.updateReferral is not implemented!');
+          }
+          
+          // Create earning record
+          await storage.createEarning({
+            userId: referrer.id,
+            source: 'referral',
+            amount: rewardAmount,
+            description: `Referral reward for ${referral.referredUsername} activation`
+          });
+          
+          // Update referrer's account balance
+          const currentBalance = referrer.accountBalance || 0;
+          await storage.updateUser(referrer.id, {
+            accountBalance: currentBalance + rewardAmount
+          });
+          
+          console.log(`[REFERRAL_REWARDS] Reward processed: ${rewardAmount} for referrer: ${referrer.username}`);
+        }
+      }
+    } catch (error) {
+      console.error(`[REFERRAL_REWARDS] Error processing rewards for user ${activatedUserId}:`, error);
+    }
+  }
 
   const httpServer = createServer(app);
   return httpServer;
