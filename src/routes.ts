@@ -431,117 +431,238 @@ if (level1Referrer && level1Referrer.referrerId) {
     }
   });
 
-  // Complete task
+  // Complete task - UPDATED TO PROPERLY HANDLE ACCOUNT BALANCES
   app.post("/api/tasks/:id/complete", async (req, res) => {
     if (!req.isAuthenticated()) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
     try {
       const taskId = parseInt(req.params.id);
       const userId = req.user.id;
-      
       // Get task
       const tasks = await storage.getTasksByUserId(userId);
       const task = tasks.find((t: any) => t.id === taskId);
-      
       if (!task) {
         return res.status(404).json({ message: "Task not found" });
       }
-      
       if (task.completed) {
         return res.status(400).json({ message: "Task already completed" });
       }
-      
       // Complete task
       const completedTask = await storage.completeTask(taskId);
-      
       if (!completedTask) {
         return res.status(500).json({ message: "Failed to complete task" });
       }
-      
-      // Create earning
+      // Create earning record
       const earningData = insertEarningSchema.parse({
         userId,
         source: task.type,
-        amount: task.amount
+        amount: task.amount,
+        description: `Task completion: ${task.type}`
       });
-      
       await storage.createEarning(earningData);
-      
+      // Update user's task balance based on task type
+      const user = await storage.getUser(userId);
+      if (user) {
+        const balanceUpdates: any = {};
+        switch (task.type) {
+          case 'ad':
+            balanceUpdates.adBalance = (user.adBalance || 0) + task.amount;
+            break;
+          case 'tiktok':
+            balanceUpdates.tiktokBalance = (user.tiktokBalance || 0) + task.amount;
+            break;
+          case 'youtube':
+            balanceUpdates.youtubeBalance = (user.youtubeBalance || 0) + task.amount;
+            break;
+          case 'instagram':
+            balanceUpdates.instagramBalance = (user.instagramBalance || 0) + task.amount;
+            break;
+        }
+        if (Object.keys(balanceUpdates).length > 0) {
+          await storage.updateUser(userId, balanceUpdates);
+        }
+      }
       return res.json(completedTask);
     } catch (error) {
+      console.error("Task completion error:", error);
       return res.status(500).json({ message: "Failed to complete task" });
     }
   });
 
-  // Process withdrawal
+  // Process withdrawal - COMPLETELY UPDATED
   app.post("/api/withdrawals", async (req, res) => {
     if (!req.isAuthenticated()) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
     try {
       const withdrawalSchema = z.object({
         source: z.string(),
         amount: z.number().min(600),
         paymentMethod: z.string(),
-        phoneNumber: z.string().optional(),
+        phoneNumber: z.string().min(10),
       });
-      
       const result = withdrawalSchema.safeParse(req.body);
       if (!result.success) {
         return res.status(400).json({ message: "Invalid request data", errors: result.error.format() });
       }
-      
-      const { source, amount, paymentMethod, phoneNumber } = req.body;
+      const { source, amount, paymentMethod, phoneNumber } = result.data;
       const userId = req.user.id;
-      const user = req.user;
-      
-      // Verify sufficient balance
-      const stats = await storage.getUserStats(userId);
-      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      // Check available balance based on source
       let availableBalance = 0;
-      if (source === 'referral') {
-        availableBalance = user.accountBalance || 0;
-      } else if (source === 'ad') {
-        availableBalance = stats.taskEarnings.ads;
-      } else if (source === 'tiktok') {
-        availableBalance = stats.taskEarnings.tiktok;
-      } else if (source === 'youtube') {
-        availableBalance = stats.taskEarnings.youtube;
-      } else if (source === 'instagram') {
-        availableBalance = stats.taskEarnings.instagram;
+      let balanceField = '';
+      switch (source) {
+        case 'referral':
+          availableBalance = user.accountBalance || 0;
+          balanceField = 'accountBalance';
+          break;
+        case 'ad':
+          availableBalance = user.adBalance || 0;
+          balanceField = 'adBalance';
+          break;
+        case 'tiktok':
+          availableBalance = user.tiktokBalance || 0;
+          balanceField = 'tiktokBalance';
+          break;
+        case 'youtube':
+          availableBalance = user.youtubeBalance || 0;
+          balanceField = 'youtubeBalance';
+          break;
+        case 'instagram':
+          availableBalance = user.instagramBalance || 0;
+          balanceField = 'instagramBalance';
+          break;
+        default:
+          return res.status(400).json({ message: "Invalid withdrawal source" });
       }
-      
       if (amount > availableBalance) {
-        return res.status(400).json({ message: "Insufficient balance" });
+        return res.status(400).json({
+          message: `Insufficient balance. Available: ${availableBalance} Sh, Requested: ${amount} Sh`
+        });
       }
-      
       const fee = 50; // Fixed withdrawal fee
-      
-      // Create withdrawal record
-      const withdrawalData = insertWithdrawalSchema.parse({
-        userId,
-        source,
-        amount,
-        fee,
-        status: 'completed', // Simulating immediate completion
-        paymentMethod,
-        phoneNumber
-      });
-
-      const withdrawal = await storage.createWithdrawal(withdrawalData);
-      
-      // Create a negative earning to account for the withdrawal
-      await storage.createEarning({
-        userId,
-        amount: -amount,
-        source,
-        description: `Withdrawal to ${paymentMethod}`,
-      });
-      
-      return res.status(201).json(withdrawal);
+      const netAmount = amount - fee;
+      // Clean phone number
+      const cleanPhoneNumber = phoneNumber.replace(/[^0-9]/g, '');
+      let finalPhoneNumber = cleanPhoneNumber;
+      // Ensure proper format for M-Pesa
+      if (paymentMethod.toLowerCase().includes('pesa') || paymentMethod.toLowerCase().includes('mpesa')) {
+        if (!finalPhoneNumber.startsWith('254')) {
+          if (finalPhoneNumber.startsWith('0')) {
+            finalPhoneNumber = '254' + finalPhoneNumber.substring(1);
+          } else if (finalPhoneNumber.startsWith('7') || finalPhoneNumber.startsWith('1')) {
+            finalPhoneNumber = '254' + finalPhoneNumber;
+          }
+        }
+        if (finalPhoneNumber.length !== 12) {
+          return res.status(400).json({
+            message: "Invalid phone number format for M-Pesa. Should be 12 digits starting with 254."
+          });
+        }
+      }
+      try {
+        // Create withdrawal record as pending
+        const withdrawalData = insertWithdrawalSchema.parse({
+          userId,
+          source,
+          amount,
+          fee,
+          status: 'pending',
+          paymentMethod,
+          phoneNumber: finalPhoneNumber
+        });
+        const withdrawal = await storage.createWithdrawal(withdrawalData);
+        // Initiate B2C payment if M-Pesa
+        if (paymentMethod.toLowerCase().includes('pesa') || paymentMethod.toLowerCase().includes('mpesa')) {
+          try {
+            const { initiateB2CPayment } = await import("./mpesa.js");
+            console.log(`[WITHDRAWAL] Initiating B2C payment: ${netAmount} to ${finalPhoneNumber}`);
+            const b2cResponse = await initiateB2CPayment(finalPhoneNumber, netAmount, `Withdrawal from ${source}`);
+            if (b2cResponse && b2cResponse.ResponseCode === '0') {
+              console.log(`[WITHDRAWAL] B2C initiated successfully: ${b2cResponse.ConversationID}`);
+              // Update withdrawal with B2C details
+              await storage.updateWithdrawal(withdrawal.id, {
+                status: 'processing',
+                mpesaConversationId: b2cResponse.ConversationID,
+                mpesaOriginatorConversationId: b2cResponse.OriginatorConversationID
+              });
+              // Deduct from user balance immediately since B2C was initiated
+              const balanceUpdate: any = {};
+              balanceUpdate[balanceField] = availableBalance - amount;
+              await storage.updateUser(userId, balanceUpdate);
+              // Create negative earning to record the withdrawal
+              await storage.createEarning({
+                userId,
+                source,
+                amount: -amount,
+                description: `Withdrawal via ${paymentMethod} (Fee: ${fee} Sh)`
+              });
+              return res.status(201).json({
+                success: true,
+                message: "Withdrawal initiated successfully. You will receive the money shortly.",
+                withdrawal: {
+                  ...withdrawal,
+                  status: 'processing'
+                }
+              });
+            } else {
+              console.error(`[WITHDRAWAL] B2C failed:`, b2cResponse);
+              // Update withdrawal status to failed
+              await storage.updateWithdrawal(withdrawal.id, {
+                status: 'failed',
+                failureReason: b2cResponse?.ResponseDescription || 'B2C payment initiation failed'
+              });
+              return res.status(500).json({
+                success: false,
+                message: "Failed to initiate withdrawal. Please try again later.",
+                error: b2cResponse?.ResponseDescription || 'Payment service unavailable'
+              });
+            }
+          } catch (b2cError) {
+            console.error(`[WITHDRAWAL] B2C error:`, b2cError);
+            // Update withdrawal status to failed
+            await storage.updateWithdrawal(withdrawal.id, {
+              status: 'failed',
+              failureReason: 'Payment service error'
+            });
+            return res.status(500).json({
+              success: false,
+              message: "Payment service temporarily unavailable. Please try again later."
+            });
+          }
+        } else {
+          // For non-M-Pesa payments, mark as completed immediately (manual processing)
+          await storage.updateWithdrawal(withdrawal.id, {
+            status: 'completed'
+          });
+          // Deduct from user balance
+          const balanceUpdate: any = {};
+          balanceUpdate[balanceField] = availableBalance - amount;
+          await storage.updateUser(userId, balanceUpdate);
+          // Create negative earning to record the withdrawal
+          await storage.createEarning({
+            userId,
+            source,
+            amount: -amount,
+            description: `Withdrawal via ${paymentMethod} (Fee: ${fee} Sh)`
+          });
+          return res.status(201).json({
+            success: true,
+            message: "Withdrawal request submitted successfully. Processing will be done manually.",
+            withdrawal: {
+              ...withdrawal,
+              status: 'completed'
+            }
+          });
+        }
+      } catch (error) {
+        console.error("Withdrawal creation error:", error);
+        return res.status(500).json({ message: "Failed to create withdrawal record" });
+      }
     } catch (error) {
       console.error("Withdrawal error:", error);
       return res.status(500).json({ message: "Failed to process withdrawal" });

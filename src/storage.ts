@@ -240,6 +240,11 @@ export class DrizzleStorage implements IStorage {
     return result[0];
   }
 
+  async updateWithdrawal(id: number, data: Partial<Withdrawal>): Promise<Withdrawal | undefined> {
+    const result = await this.db.update(withdrawals).set(data).where(eq(withdrawals.id, id)).returning();
+    return result[0];
+  }
+
   async getWithdrawalsByUserId(userId: number): Promise<Withdrawal[]> {
     return this.db.select().from(withdrawals).where(eq(withdrawals.userId, userId)).orderBy(desc(withdrawals.createdAt));
   }

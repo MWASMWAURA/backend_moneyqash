@@ -7,6 +7,14 @@ const PASS_KEY = process.env.MPESA_PASS_KEY;
 const CALLBACK_URL = process.env.MPESA_CALLBACK_URL;
 const ACCOUNT_REFERENCE = process.env.MPESA_ACCOUNT_REFERENCE || "MoneyQash"; // Default if not set
 
+// B2C ENV VARS
+const B2C_INITIATOR_NAME = process.env.MPESA_B2C_INITIATOR_NAME;
+const B2C_SECURITY_CREDENTIAL = process.env.MPESA_B2C_SECURITY_CREDENTIAL;
+const B2C_COMMAND_ID = process.env.MPESA_B2C_COMMAND_ID || "BusinessPayment";
+const B2C_SHORTCODE = process.env.MPESA_B2C_SHORTCODE;
+const B2C_RESULT_URL = process.env.MPESA_B2C_RESULT_URL;
+const B2C_QUEUE_TIMEOUT_URL = process.env.MPESA_B2C_QUEUE_TIMEOUT_URL;
+
 function getTimestamp() {
   const date = new Date();
   const year = date.getFullYear();
@@ -101,5 +109,49 @@ export async function initiateSTKPush(phoneNumber: string, amount: number) {
     const error = err as AxiosError;
     console.error("STK Push Error:", error.response?.data || error.message || err);
     throw new Error("Failed to initiate payment. Please try again.");
+  }
+}
+
+// B2C Payment (Business to Customer)
+export async function initiateB2CPayment(
+  phoneNumber: string,
+  amount: number,
+  remarks: string = "Withdrawal"
+) {
+  try {
+    if (!B2C_INITIATOR_NAME || !B2C_SECURITY_CREDENTIAL || !B2C_COMMAND_ID || !B2C_SHORTCODE || !B2C_RESULT_URL || !B2C_QUEUE_TIMEOUT_URL) {
+      throw new Error("Missing B2C environment variables. Check .env file.");
+    }
+    if (!phoneNumber.match(/^254[0-9]{9}$/)) {
+      throw new Error("Invalid phone number format. Must start with 254 followed by 9 digits");
+    }
+    const accessToken = await getAccessToken();
+    const payload = {
+      InitiatorName: B2C_INITIATOR_NAME,
+      SecurityCredential: B2C_SECURITY_CREDENTIAL,
+      CommandID: B2C_COMMAND_ID,
+      Amount: amount,
+      PartyA: B2C_SHORTCODE,
+      PartyB: phoneNumber,
+      Remarks: remarks,
+      QueueTimeOutURL: B2C_QUEUE_TIMEOUT_URL,
+      ResultURL: B2C_RESULT_URL,
+      Occasion: remarks
+    };
+    const response = await axios.post(
+      "https://sandbox.safaricom.co.ke/mpesa/b2c/v1/paymentrequest",
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }
+    );
+    console.log("B2C Payment Response:", response.data);
+    return response.data;
+  } catch (err) {
+    const error = err as AxiosError;
+    console.error("B2C Payment Error:", error.response?.data || error.message || err);
+    throw new Error("Failed to initiate B2C payment. Please try again.");
   }
 }

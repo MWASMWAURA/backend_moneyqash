@@ -108,6 +108,10 @@ export const withdrawals = pgTable("withdrawals", {
   processedAt: timestamp("processed_at"),
   paymentMethod: text("payment_method").notNull(),
   phoneNumber: text("phone_number"),
+  mpesaConversationId: text("mpesa_conversation_id"),
+  mpesaOriginatorConversationId: text("mpesa_originator_conversation_id"),
+  failureReason: text("failure_reason"),
+  completedAt: timestamp("completed_at"),
 });
 
 export const insertWithdrawalSchema = createInsertSchema(withdrawals).pick({
@@ -118,6 +122,10 @@ export const insertWithdrawalSchema = createInsertSchema(withdrawals).pick({
   status: true,
   paymentMethod: true,
   phoneNumber: true,
+  mpesaConversationId: true,
+  mpesaOriginatorConversationId: true,
+  failureReason: true,
+  completedAt: true,
 });
 
 // M-Pesa Transactions Table
