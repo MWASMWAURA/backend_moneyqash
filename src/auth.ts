@@ -136,32 +136,44 @@ export function setupAuth(app: Express): void {
         newReferralCode = generateReferralCode();
       }
 
-      // Create new user
+      // Handle referral lookup BEFORE creating user
+      let referrerId = undefined;
+      if (referralCode) {
+        const referrer = await storage.getUserByReferralCode(referralCode.toUpperCase());
+        if (referrer) {
+          referrerId = referrer.id;
+          console.log(`[REGISTER] Found referrer: ${referrer.username} (ID: ${referrer.id})`);
+        } else {
+          console.log(`[REGISTER] Invalid referral code provided: ${referralCode}`);
+        }
+      }
+
+      // Create new user with referrerId properly set
       const newUser = await storage.createUser({
         username,
         password: hashedPassword,
         fullName,
         phone,
         referralCode: newReferralCode,
+        referrerId: referrerId, // This will now be set correctly
         isActivated: false,
         accountBalance: 0
       });
 
-      // Handle referral if provided
-      if (referralCode) {
-        const referrer = await storage.getUserByReferralCode(referralCode.toUpperCase());
-        if (referrer) {
-          // Create referral record (inactive until user activates)
-          await storage.createReferral({
-            referrerId: referrer.id,
-            referredId: newUser.id,
-            level: 1,
-            amount: 0, // Will be set when user activates
-            isActive: false,
-            referredUsername: newUser.username
-          });
-          console.log(`[REGISTER] Referral registered: ${referrer.username} -> ${newUser.username}`);
-        }
+      console.log(`[REGISTER] Created user: ${newUser.username} with referrerId: ${newUser.referrerId}`);
+
+      // Create referral record if we have a referrer
+      if (referrerId) {
+        // Create referral record (inactive until user activates)
+        await storage.createReferral({
+          referrerId: referrerId,
+          referredId: newUser.id,
+          level: 1,
+          amount: 0, // Will be set when user activates
+          isActive: false,
+          referredUsername: newUser.username
+        });
+        console.log(`[REGISTER] Referral record created: ReferrerID(${referrerId}) -> NewUser(${newUser.id})`);
       }
 
       // Log user in
