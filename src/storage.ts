@@ -150,7 +150,7 @@ export class DrizzleStorage implements IStorage {
   async createUser(insertUser: InsertUser): Promise<User> {
     const validatedUser = insertUserSchema.parse(insertUser);
     const result = await this.db.insert(users).values(validatedUser).returning();
-    return result[0];
+    return (result as User[])[0];
   }
 
   async updateUser(id: number, userData: Partial<User>): Promise<User | undefined> {

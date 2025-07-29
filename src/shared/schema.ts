@@ -2,7 +2,7 @@ import { pgTable, text, serial, integer, boolean, timestamp, pgEnum, varchar } f
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const users = pgTable("users", {
+export const users:any = pgTable("users", {
   id: serial("id").primaryKey(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
@@ -12,6 +12,7 @@ export const users = pgTable("users", {
   isActivated: boolean("is_activated").default(false).notNull(),
   accountBalance: integer("account_balance").default(0).notNull(),
   referralCode: text("referral_code").notNull().unique(),
+  referrerId: integer("referrer_id").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -22,6 +23,7 @@ export const insertUserSchema = createInsertSchema(users).pick({
   phone: true,
   withdrawalPhone: true,
   referralCode: true,
+  referrerId: true,
 });
 
 export const referrals = pgTable("referrals", {

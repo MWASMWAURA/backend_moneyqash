@@ -366,7 +366,14 @@ app.post("/api/referrals", async (req, res) => {
     while (await storage.getUserByReferralCode(referralCode)) {
       referralCode = generateReferralCode();
     }
-    const newUser = await storage.createUser({ username, password, fullName, phone, referralCode });
+    const newUser = await storage.createUser({
+      username,
+      password,
+      fullName,
+      phone,
+      referralCode,
+      referrerId: referrerId // Add this line
+    });
     
     // Create level 1 referral record (always created, but reward only when activated)
     const level1ReferralData = insertReferralSchema.parse({
@@ -380,25 +387,22 @@ app.post("/api/referrals", async (req, res) => {
     
     await storage.createReferral(level1ReferralData);
     
-    // FIXED: Check if the level 1 referrer was also referred by someone (for level 2)
-    const level1ReferrerReferrals = await storage.getReferralsByReferredId(referrerId);
-    const level1ReferrerAsReferredUser = level1ReferrerReferrals.find((r: any) => r.level === 1);
-    
-    if (level1ReferrerAsReferredUser) {
-      // The level 1 referrer was referred by someone, so create level 2 referral
-      const level2ReferralData = insertReferralSchema.parse({
-        referrerId: level1ReferrerAsReferredUser.referrerId, // The person who referred the level 1 referrer
-        referredId: newUser.id,
-        referredUsername: newUser.username,
-        level: 2,
-        amount: 0, // Will be updated when user activates
-        isActive: false
-      });
-      
-      await storage.createReferral(level2ReferralData);
-      console.log(`[REFERRAL] Created level 2 referral: Level2Referrer(${level1ReferrerAsReferredUser.referrerId}) -> NewUser(${newUser.id})`);
-    }
-    
+    // FIXED: Check if the level 1 referrer has a referrer (for level 2)
+const level1Referrer = await storage.getUser(referrerId);
+if (level1Referrer && level1Referrer.referrerId) {
+  // The level 1 referrer has a referrer, so create level 2 referral
+  const level2ReferralData = insertReferralSchema.parse({
+    referrerId: level1Referrer.referrerId, // The person who referred the level 1 referrer
+    referredId: newUser.id,
+    referredUsername: newUser.username,
+    level: 2,
+    amount: 0, // Will be updated when user activates
+    isActive: false
+  });
+  
+  await storage.createReferral(level2ReferralData);
+  console.log(`[REFERRAL] Created level 2 referral: Level2Referrer(${level1Referrer.referrerId}) -> NewUser(${newUser.id})`);
+}
     return res.status(201).json({ message: "Referral registered successfully" });
   } catch (error) {
     console.error("Referral registration error:", error);
