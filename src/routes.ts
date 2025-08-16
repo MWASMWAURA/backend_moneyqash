@@ -1067,6 +1067,123 @@ if (level1Referrer && level1Referrer.referrerId) {
     }
   });
 
+  // Get available tasks
+  app.get("/api/available-tasks", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      // Return mock available tasks for now - you can replace with actual data
+      const availableTasks = [
+        { id: 1, type: "ads", title: "Watch Advertisement 1", description: "Watch this ad to earn rewards", reward: 10, url: "/videos/ad1.mp4" },
+        { id: 2, type: "ads", title: "Watch Advertisement 2", description: "Watch this ad to earn rewards", reward: 10, url: "/videos/ad2.mp4" },
+        { id: 3, type: "youtube", title: "YouTube Video 1", description: "Watch this YouTube video", reward: 15, url: "https://www.youtube.com/embed/jNQXAC9IVRw" },
+        { id: 4, type: "youtube", title: "YouTube Video 2", description: "Watch this YouTube video", reward: 15, url: "https://www.youtube.com/embed/dQw4w9WgXcQ" },
+        { id: 5, type: "tiktok", title: "TikTok Video 1", description: "Watch this TikTok video", reward: 12, url: "https://www.tiktok.com/embed/7118919736255810822" },
+        { id: 6, type: "tiktok", title: "TikTok Video 2", description: "Watch this TikTok video", reward: 12, url: "https://www.tiktok.com/embed/7156867532731331866" },
+        { id: 7, type: "instagram", title: "Instagram Post 1", description: "View this Instagram post", reward: 8, url: "https://www.instagram.com/p/CukvDC5MMcA/embed" },
+        { id: 8, type: "instagram", title: "Instagram Post 2", description: "View this Instagram post", reward: 8, url: "https://www.instagram.com/p/CvjsYYSMB2Y/embed" }
+      ];
+      
+      return res.json(availableTasks);
+    } catch (error) {
+      console.error("Error fetching available tasks:", error);
+      return res.status(500).json({ message: "Failed to fetch available tasks" });
+    }
+  });
+
+  // Get user tasks (completed tasks)
+  app.get("/api/user/tasks", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      const userId = req.user.id;
+      // For now, return empty array - you can implement actual user task tracking
+      const userTasks: any[] = [];
+      
+      return res.json(userTasks);
+    } catch (error) {
+      console.error("Error fetching user tasks:", error);
+      return res.status(500).json({ message: "Failed to fetch user tasks" });
+    }
+  });
+
+  // Complete a task
+  app.post("/api/tasks/:taskId/complete", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      const taskId = parseInt(req.params.taskId);
+      const userId = req.user.id;
+      
+      // Mock task completion - you can implement actual logic
+      const taskRewards: Record<number, { type: string; reward: number }> = {
+        1: { type: "ads", reward: 10 },
+        2: { type: "ads", reward: 10 },
+        3: { type: "youtube", reward: 15 },
+        4: { type: "youtube", reward: 15 },
+        5: { type: "tiktok", reward: 12 },
+        6: { type: "tiktok", reward: 12 },
+        7: { type: "instagram", reward: 8 },
+        8: { type: "instagram", reward: 8 }
+      };
+      
+      const task = taskRewards[taskId];
+      if (!task) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+      
+      // Update user's task balance
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      const updateData: any = {};
+      switch (task.type) {
+        case "ads":
+          updateData.adBalance = (user.adBalance || 0) + task.reward;
+          break;
+        case "youtube":
+          updateData.youtubeBalance = (user.youtubeBalance || 0) + task.reward;
+          break;
+        case "tiktok":
+          updateData.tiktokBalance = (user.tiktokBalance || 0) + task.reward;
+          break;
+        case "instagram":
+          updateData.instagramBalance = (user.instagramBalance || 0) + task.reward;
+          break;
+      }
+      
+      await storage.updateUser(userId, updateData);
+      
+      // Create earning record
+      const sourceMap: Record<string, string> = {
+        "ads": "ad",
+        "youtube": "youtube", 
+        "tiktok": "tiktok",
+        "instagram": "instagram"
+      };
+      
+      await storage.createEarning({
+        userId: userId,
+        source: sourceMap[task.type] || task.type,
+        amount: task.reward,
+        description: `Task completion - ${task.type} task`
+      });
+      
+      return res.json({ success: true, reward: task.reward });
+    } catch (error) {
+      console.error("Error completing task:", error);
+      return res.status(500).json({ message: "Failed to complete task" });
+    }
+  });
+
   // Get user earnings with structured response
   app.get("/api/user/earnings", async (req, res) => {
     if (!req.isAuthenticated()) {
