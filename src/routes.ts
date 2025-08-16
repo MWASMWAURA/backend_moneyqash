@@ -16,6 +16,99 @@ import { z } from "zod";
 // Temporary in-memory store for pending activations. NOT FOR PRODUCTION.
 const pendingActivationsMap = new Map<string, number>(); // CheckoutRequestID -> userId
 
+// Process referral rewards when a user activates
+async function processReferralRewards(activatedUserId: number): Promise<void> {
+  console.log(`Processing referral rewards for user ${activatedUserId}`);
+  
+  try {
+    const activatedUser = await storage.getUser(activatedUserId);
+    if (!activatedUser?.referrerId) {
+      console.log(`User ${activatedUserId} has no referrer`);
+      return;
+    }
+
+    const referrerId = activatedUser.referrerId;
+    console.log(`User ${activatedUserId} was referred by user ${referrerId}`);
+
+    // Create Level 1 referral record and pay reward
+    const level1Reward = 300; // Shillings for direct referral
+    try {
+      await storage.createReferral({
+        referrerId: referrerId,
+        referredId: activatedUserId,
+        level: 1,
+        amount: level1Reward,
+        referredUsername: activatedUser.username || "Unknown",
+        referredFullName: activatedUser.fullName || "Unknown User",
+        isActive: true
+      });
+      
+      // Add reward to referrer's balance
+      const referrer = await storage.getUser(referrerId);
+      if (referrer) {
+        await storage.updateUser(referrerId, { 
+          accountBalance: (referrer.accountBalance || 0) + level1Reward 
+        });
+        
+        // Create earning record
+        await storage.createEarning({
+          userId: referrerId,
+          source: 'referral',
+          amount: level1Reward,
+          description: `Level 1 referral bonus - ${activatedUser.username} activated`
+        });
+        
+        console.log(`Paid ${level1Reward} Sh to user ${referrerId} for Level 1 referral`);
+      }
+    } catch (level1Error) {
+      console.error(`Error processing Level 1 referral for user ${referrerId}:`, level1Error);
+    }
+
+    // Check for Level 2 referral (referrer's referrer)
+    const referrer = await storage.getUser(referrerId);
+    if (referrer?.referrerId) {
+      const level2ReferrerId = referrer.referrerId;
+      const level2Reward = 150; // Shillings for secondary referral
+      
+      console.log(`Processing Level 2 referral for user ${level2ReferrerId}`);
+      
+      try {
+        await storage.createReferral({
+          referrerId: level2ReferrerId,
+          referredId: activatedUserId,
+          level: 2,
+          amount: level2Reward,
+          referredUsername: activatedUser.username || "Unknown",
+          referredFullName: activatedUser.fullName || "Unknown User",
+          isActive: true
+        });
+        
+        // Add reward to Level 2 referrer's balance
+        const level2Referrer = await storage.getUser(level2ReferrerId);
+        if (level2Referrer) {
+          await storage.updateUser(level2ReferrerId, { 
+            accountBalance: (level2Referrer.accountBalance || 0) + level2Reward 
+          });
+          
+          // Create earning record
+          await storage.createEarning({
+            userId: level2ReferrerId,
+            source: 'referral',
+            amount: level2Reward,
+            description: `Level 2 referral bonus - ${activatedUser.username} activated`
+          });
+          
+          console.log(`Paid ${level2Reward} Sh to user ${level2ReferrerId} for Level 2 referral`);
+        }
+      } catch (level2Error) {
+        console.error(`Error processing Level 2 referral for user ${level2ReferrerId}:`, level2Error);
+      }
+    }
+  } catch (error) {
+    console.error(`Error in processReferralRewards for user ${activatedUserId}:`, error);
+  }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Setup authentication routes
   setupAuth(app);
@@ -944,15 +1037,77 @@ if (level1Referrer && level1Referrer.referrerId) {
     }
   });
 
-// Helper function to get withdrawal status description
-function getWithdrawalStatusDescription(status: string): string {
-  switch (status) {
-    case 'pending': return 'Withdrawal request received and is being processed';
-    case 'processing': return 'Payment is being processed through M-Pesa';
-    case 'completed': return 'Withdrawal completed successfully';
-    case 'failed': return 'Withdrawal failed - please try again';
-    default: return 'Unknown status';
-  }
+  // Get user referrals
+  app.get("/api/user/referrals", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      const userId = req.user.id;
+      const referrals = await storage.getReferralsByReferrerId(userId);
+      return res.json(referrals);
+    } catch (error) {
+      console.error("Error fetching user referrals:", error);
+      return res.status(500).json({ message: "Failed to fetch referrals" });
+    }
+  });
+
+  // Get user withdrawals
+  app.get("/api/user/withdrawals", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      const userId = req.user.id;
+      const withdrawals = await storage.getWithdrawalsByUserId(userId);
+      return res.json(withdrawals);
+    } catch (error) {
+      console.error("Error fetching user withdrawals:", error);
+      return res.status(500).json({ message: "Failed to fetch withdrawals" });
+    }
+  });
+
+  // Get user earnings with structured response
+  app.get("/api/user/earnings", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      const userId = req.user.id;
+      const allEarnings = await storage.getEarningsByUserId(userId);
+      
+      // Structure earnings by source
+      const earnings = {
+        referral: allEarnings.filter(e => e.source === 'referral'),
+        ads: allEarnings.filter(e => e.source === 'ad'),
+        youtube: allEarnings.filter(e => e.source === 'youtube'), 
+        tiktok: allEarnings.filter(e => e.source === 'tiktok'),
+        instagram: allEarnings.filter(e => e.source === 'instagram'),
+        all: allEarnings
+      };
+
+      // Calculate totals
+      const totals = {
+        referral: earnings.referral.reduce((sum, e) => sum + e.amount, 0),
+        ads: earnings.ads.reduce((sum, e) => sum + e.amount, 0),
+        youtube: earnings.youtube.reduce((sum, e) => sum + e.amount, 0),
+        tiktok: earnings.tiktok.reduce((sum, e) => sum + e.amount, 0),
+        instagram: earnings.instagram.reduce((sum, e) => sum + e.amount, 0),
+        total: allEarnings.reduce((sum, e) => sum + e.amount, 0)
+      };
+
+      return res.json({ earnings, totals });
+    } catch (error) {
+      console.error("Error fetching user earnings:", error);
+      return res.status(500).json({ message: "Failed to fetch earnings" });
+    }
+  });
+
+  const httpServer = createServer(app);
+  return httpServer;
 }
 
 // Helper function to process referral rewards after activation
@@ -1022,6 +1177,18 @@ async function processReferralRewards(activatedUserId: number) {
     console.error(`[REFERRAL_REWARDS] Error processing rewards for user ${activatedUserId}:`, error);
   }
 }
+
+// Helper function to get withdrawal status description
+function getWithdrawalStatusDescription(status: string): string {
+  switch (status) {
+    case 'pending': return 'Withdrawal request received and is being processed';
+    case 'processing': return 'Payment is being processed through M-Pesa';
+    case 'completed': return 'Withdrawal completed successfully';
+    case 'failed': return 'Withdrawal failed - please try again';
+    default: return 'Unknown status';
+  }
+}
+  
   const httpServer = createServer(app);
   return httpServer;
 }

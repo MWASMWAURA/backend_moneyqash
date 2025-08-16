@@ -352,13 +352,23 @@ export class DrizzleStorage implements IStorage {
     // Use referralCode instead of username in the referral link for better security
     const referralLink = `${process.env.FRONTEND_URL || "http://localhost:5000"}/register?code=${user.referralCode}`;
 
+    // Task balances (withdrawable amounts)
+    const taskBalances = {
+      ads: user.adBalance || 0,
+      tiktok: user.tiktokBalance || 0,
+      youtube: user.youtubeBalance || 0,
+      instagram: user.instagramBalance || 0
+    };
+
     return {
       accountBalance: user.accountBalance,
       totalProfit,
+      totalReferralEarnings,
       directReferrals,
       secondaryReferrals,
       referralLink,
-      taskEarnings
+      taskEarnings,
+      taskBalances
     };
   }
 
@@ -369,6 +379,34 @@ export class DrizzleStorage implements IStorage {
       referredUsername: referral.referredUsername
     });
     const result = await this.db.insert(referrals).values(validatedReferral).returning();
+    return result[0];
+  }
+
+  // Referral operations for routes
+  async getReferralsByReferrerId(referrerId: number): Promise<any[]> {
+    const result = await this.db.select({
+      id: referrals.id,
+      referrerId: referrals.referrerId,
+      referredId: referrals.referredId,
+      referredUsername: users.username,
+      level: referrals.level,
+      isActive: referrals.isActive,
+      amount: referrals.amount,
+      createdAt: referrals.createdAt
+    })
+    .from(referrals)
+    .leftJoin(users, eq(referrals.referredId, users.id))
+    .where(eq(referrals.referrerId, referrerId))
+    .orderBy(desc(referrals.createdAt));
+    return result;
+  }
+
+  async getReferralsByReferredId(referredId: number): Promise<any[]> {
+    return this.db.select().from(referrals).where(eq(referrals.referredId, referredId));
+  }
+
+  async updateReferral(id: number, data: any): Promise<any> {
+    const result = await this.db.update(referrals).set(data).where(eq(referrals.id, id)).returning();
     return result[0];
   }
 }
