@@ -39,7 +39,6 @@ async function processReferralRewards(activatedUserId: number): Promise<void> {
         level: 1,
         amount: level1Reward,
         referredUsername: activatedUser.username || "Unknown",
-        referredFullName: activatedUser.fullName || "Unknown User",
         isActive: true
       });
       
@@ -79,7 +78,6 @@ async function processReferralRewards(activatedUserId: number): Promise<void> {
           level: 2,
           amount: level2Reward,
           referredUsername: activatedUser.username || "Unknown",
-          referredFullName: activatedUser.fullName || "Unknown User",
           isActive: true
         });
         
@@ -1110,74 +1108,6 @@ if (level1Referrer && level1Referrer.referrerId) {
   return httpServer;
 }
 
-// Helper function to process referral rewards after activation
-async function processReferralRewards(activatedUserId: number) {
-  try {
-    console.log(`[REFERRAL_REWARDS] Processing rewards for activated user: ${activatedUserId}`);
-    // Find all referrals where this user was referred
-    const referrals = await storage.getReferralsByReferredId(activatedUserId);
-    
-    for (const referral of referrals) {
-      if (!referral.isActive) {
-        console.log(`[REFERRAL_REWARDS] Processing level ${referral.level} referral for referrer: ${referral.referrerId}`);
-        
-        // Get referrer info
-        const referrer = await storage.getUser(referral.referrerId);
-        if (!referrer) {
-          console.error(`[REFERRAL_REWARDS] Referrer not found: ${referral.referrerId}`);
-          continue;
-        }
-        
-        let rewardAmount = 0;
-        
-        if (referral.level === 1) {
-          // Level 1 referral rewards
-          const referrerReferrals = await storage.getReferralsByReferrerId(referral.referrerId);
-          const activeDirectReferrals = referrerReferrals.filter((r: any) => r.level === 1 && r.isActive);
-          
-          if (activeDirectReferrals.length === 0) {
-            rewardAmount = 300; // First referral
-          } else {
-            rewardAmount = 270; // Additional referrals
-          }
-        } else if (referral.level === 2) {
-          // Level 2 referral rewards (fixed amount)
-          rewardAmount = 150; // Level 2 referral reward
-          console.log(`[LEVEL2-REWARD] Processing level 2 reward for referrerId=${referral.referrerId}, referredId=${referral.referredId}`);
-        }
-        
-        if (rewardAmount > 0) {
-          console.log(`[REFERRAL_REWARDS] Reward amount: ${rewardAmount} for level ${referral.level} referrer: ${referrer.username}`);
-          
-          // Update referral record
-          await storage.updateReferral(referral.id, {
-            isActive: true,
-            amount: rewardAmount
-          });
-          
-          // Create earning record
-          await storage.createEarning({
-            userId: referrer.id,
-            source: 'referral',
-            amount: rewardAmount,
-            description: `Level ${referral.level} referral reward for user activation`
-          });
-          
-          // Update referrer's account balance
-          const currentBalance = referrer.accountBalance || 0;
-          await storage.updateUser(referrer.id, {
-            accountBalance: currentBalance + rewardAmount
-          });
-          
-          console.log(`[REFERRAL_REWARDS] Level ${referral.level} reward processed: ${rewardAmount} for referrer: ${referrer.username}`);
-        }
-      }
-    }
-  } catch (error) {
-    console.error(`[REFERRAL_REWARDS] Error processing rewards for user ${activatedUserId}:`, error);
-  }
-}
-
 // Helper function to get withdrawal status description
 function getWithdrawalStatusDescription(status: string): string {
   switch (status) {
@@ -1187,8 +1117,4 @@ function getWithdrawalStatusDescription(status: string): string {
     case 'failed': return 'Withdrawal failed - please try again';
     default: return 'Unknown status';
   }
-}
-  
-  const httpServer = createServer(app);
-  return httpServer;
 }

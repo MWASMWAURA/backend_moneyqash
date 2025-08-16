@@ -177,15 +177,29 @@ export class DrizzleStorage implements IStorage {
     return result[0];
   }
 
-  async getReferralsByReferrerId(referrerId: number): Promise<Referral[]> {
-    return this.db.select().from(referrals).where(eq(referrals.referrerId, referrerId)).orderBy(desc(referrals.createdAt));
+  async getReferralsByReferrerId(referrerId: number): Promise<any[]> {
+    const result = await this.db.select({
+      id: referrals.id,
+      referrerId: referrals.referrerId,
+      referredId: referrals.referredId,
+      referredUsername: users.username,
+      level: referrals.level,
+      isActive: referrals.isActive,
+      amount: referrals.amount,
+      createdAt: referrals.createdAt
+    })
+    .from(referrals)
+    .leftJoin(users, eq(referrals.referredId, users.id))
+    .where(eq(referrals.referrerId, referrerId))
+    .orderBy(desc(referrals.createdAt));
+    return result;
   }
 
   async getReferralsByReferredId(referredId: number): Promise<Referral[]> {
     return this.db.select().from(referrals).where(eq(referrals.referredId, referredId)).orderBy(desc(referrals.createdAt));
   }
 
-  async updateReferral(id: number, data: Partial<Referral>): Promise<Referral | undefined> {
+  async updateReferral(id: number, data: any): Promise<any> {
     const result = await this.db.update(referrals).set(data).where(eq(referrals.id, id)).returning();
     return result[0];
   }
@@ -363,13 +377,12 @@ export class DrizzleStorage implements IStorage {
     return {
       accountBalance: user.accountBalance,
       totalProfit,
-      totalReferralEarnings,
       directReferrals,
       secondaryReferrals,
       referralLink,
       taskEarnings,
       taskBalances
-    };
+    } as any;
   }
 
   // Also add this method to create referrals with referredUsername:
@@ -382,33 +395,7 @@ export class DrizzleStorage implements IStorage {
     return result[0];
   }
 
-  // Referral operations for routes
-  async getReferralsByReferrerId(referrerId: number): Promise<any[]> {
-    const result = await this.db.select({
-      id: referrals.id,
-      referrerId: referrals.referrerId,
-      referredId: referrals.referredId,
-      referredUsername: users.username,
-      level: referrals.level,
-      isActive: referrals.isActive,
-      amount: referrals.amount,
-      createdAt: referrals.createdAt
-    })
-    .from(referrals)
-    .leftJoin(users, eq(referrals.referredId, users.id))
-    .where(eq(referrals.referrerId, referrerId))
-    .orderBy(desc(referrals.createdAt));
-    return result;
-  }
 
-  async getReferralsByReferredId(referredId: number): Promise<any[]> {
-    return this.db.select().from(referrals).where(eq(referrals.referredId, referredId));
-  }
-
-  async updateReferral(id: number, data: any): Promise<any> {
-    const result = await this.db.update(referrals).set(data).where(eq(referrals.id, id)).returning();
-    return result[0];
-  }
 }
 
 if (!process.env.DATABASE_URL) {
