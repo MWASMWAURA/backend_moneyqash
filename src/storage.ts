@@ -57,6 +57,8 @@ export interface IStorage {
   // Withdrawal operations
   createWithdrawal(withdrawal: InsertWithdrawal): Promise<Withdrawal>;
   getWithdrawalsByUserId(userId: number): Promise<Withdrawal[]>;
+  updateWithdrawal(id: number, data: Partial<Withdrawal>): Promise<Withdrawal | undefined>;
+  getWithdrawalByConversationId(conversationId: string): Promise<Withdrawal | undefined>;
 
   // Stats operations
   getUserStats(userId: number): Promise<UserStats>;
@@ -247,6 +249,13 @@ export class DrizzleStorage implements IStorage {
 
   async getWithdrawalsByUserId(userId: number): Promise<Withdrawal[]> {
     return this.db.select().from(withdrawals).where(eq(withdrawals.userId, userId)).orderBy(desc(withdrawals.createdAt));
+  }
+
+  async getWithdrawalByConversationId(conversationId: string): Promise<Withdrawal | undefined> {
+    const result = await this.db.select().from(withdrawals)
+      .where(eq(withdrawals.mpesaConversationId, conversationId))
+      .limit(1);
+    return result[0];
   }
 
   // M-Pesa Transaction operations

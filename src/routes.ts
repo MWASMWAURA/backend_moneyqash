@@ -34,7 +34,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get user earnings
+  // Get user earnings - Enhanced to show breakdown by source
   app.get("/api/user/earnings", async (req, res) => {
     if (!req.isAuthenticated()) {
       return res.status(401).json({ message: "Unauthorized" });
@@ -45,10 +45,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.id;
       const earnings = await storage.getEarningsByUserId(userId);
       console.log("Found earnings:", earnings);
-      if (!earnings || earnings.length === 0) {
-        return res.status(404).json({ message: "No earnings found" });
-      }
-      return res.json(earnings);
+      
+      // Group earnings by source for better frontend display
+      const earningsBySource = {
+        referral: earnings.filter(e => e.source === 'referral'),
+        ads: earnings.filter(e => e.source === 'ad'),
+        youtube: earnings.filter(e => e.source === 'youtube'),
+        tiktok: earnings.filter(e => e.source === 'tiktok'),
+        instagram: earnings.filter(e => e.source === 'instagram'),
+        all: earnings
+      };
+      
+      // Calculate totals
+      const totals = {
+        referral: earningsBySource.referral.reduce((sum, e) => sum + e.amount, 0),
+        ads: earningsBySource.ads.reduce((sum, e) => sum + e.amount, 0),
+        youtube: earningsBySource.youtube.reduce((sum, e) => sum + e.amount, 0),
+        tiktok: earningsBySource.tiktok.reduce((sum, e) => sum + e.amount, 0),
+        instagram: earningsBySource.instagram.reduce((sum, e) => sum + e.amount, 0),
+        total: earnings.reduce((sum, e) => sum + e.amount, 0)
+      };
+      
+      return res.json({
+        earnings: earningsBySource,
+        totals: totals
+      });
     } catch (error) {
       console.error("Error fetching earnings:", error);
       return res.status(500).json({ message: "Failed to fetch earnings" });
@@ -815,6 +836,124 @@ if (level1Referrer && level1Referrer.referrerId) {
       });
     }
   });
+
+  // M-Pesa B2C Callback for withdrawals
+  app.post("/api/mpesa/b2c/callback", async (req, res) => {
+    try {
+      console.log("M-Pesa B2C Callback Received:");
+      console.log("Headers:", JSON.stringify(req.headers, null, 2));
+      console.log("Body:", JSON.stringify(req.body, null, 2));
+
+      const callbackData = req.body.Result;
+      
+      if (!callbackData) {
+        console.error("Malformed M-Pesa B2C callback data received.");
+        return res.status(400).json({ ResultCode: 1, ResultDesc: "Malformed callback data" });
+      }
+
+      const { ConversationID, ResultCode, ResultDesc, ResultParameters } = callbackData;
+      console.log(`B2C Callback for ConversationID: ${ConversationID}`);
+      console.log(`ResultCode: ${ResultCode}, ResultDesc: ${ResultDesc}`);
+
+      // Find withdrawal by conversation ID
+      const withdrawal = await storage.getWithdrawalByConversationId(ConversationID);
+      
+      if (!withdrawal) {
+        console.error(`No withdrawal found for ConversationID: ${ConversationID}`);
+        return res.status(400).json({ ResultCode: 1, ResultDesc: "No withdrawal found for this conversation" });
+      }
+
+      if (ResultCode === 0) {
+        // B2C payment successful
+        console.log(`B2C payment successful for withdrawal ID: ${withdrawal.id}`);
+        
+        // Extract receipt number if available
+        let receiptNumber = null;
+        if (ResultParameters && Array.isArray(ResultParameters.ResultParameter)) {
+          const receiptParam = ResultParameters.ResultParameter.find(
+            (param: any) => param.Key === 'TransactionReceipt'
+          );
+          if (receiptParam) receiptNumber = receiptParam.Value;
+        }
+
+        await storage.updateWithdrawal(withdrawal.id, {
+          status: 'completed',
+          completedAt: new Date(),
+          processedAt: new Date()
+        });
+
+        console.log(`Withdrawal ${withdrawal.id} marked as completed`);
+      } else {
+        // B2C payment failed
+        console.error(`B2C payment failed for withdrawal ID: ${withdrawal.id}. ResultCode: ${ResultCode}, ResultDesc: ${ResultDesc}`);
+        
+        await storage.updateWithdrawal(withdrawal.id, {
+          status: 'failed',
+          failureReason: ResultDesc,
+          processedAt: new Date()
+        });
+
+        // Refund user balance since the withdrawal failed
+        const user = await storage.getUser(withdrawal.userId);
+        if (user) {
+          const balanceUpdates: any = {};
+          switch (withdrawal.source) {
+            case 'referral':
+              balanceUpdates.accountBalance = (user.accountBalance || 0) + withdrawal.amount;
+              break;
+            case 'ad':
+              balanceUpdates.adBalance = (user.adBalance || 0) + withdrawal.amount;
+              break;
+            case 'tiktok':
+              balanceUpdates.tiktokBalance = (user.tiktokBalance || 0) + withdrawal.amount;
+              break;
+            case 'youtube':
+              balanceUpdates.youtubeBalance = (user.youtubeBalance || 0) + withdrawal.amount;
+              break;
+            case 'instagram':
+              balanceUpdates.instagramBalance = (user.instagramBalance || 0) + withdrawal.amount;
+              break;
+          }
+          
+          if (Object.keys(balanceUpdates).length > 0) {
+            await storage.updateUser(withdrawal.userId, balanceUpdates);
+            
+            // Create a refund earning record
+            await storage.createEarning({
+              userId: withdrawal.userId,
+              source: withdrawal.source,
+              amount: withdrawal.amount,
+              description: `Refund for failed withdrawal #${withdrawal.id}`
+            });
+          }
+        }
+
+        console.log(`Withdrawal ${withdrawal.id} marked as failed and balance refunded`);
+      }
+
+      return res.status(200).json({ 
+        ResultCode: 0, 
+        ResultDesc: "B2C callback received and processed successfully"
+      });
+    } catch (error) {
+      console.error("M-Pesa B2C callback error:", error);
+      return res.status(500).json({ 
+        ResultCode: 1, 
+        ResultDesc: "Failed to process B2C callback"
+      });
+    }
+  });
+
+// Helper function to get withdrawal status description
+function getWithdrawalStatusDescription(status: string): string {
+  switch (status) {
+    case 'pending': return 'Withdrawal request received and is being processed';
+    case 'processing': return 'Payment is being processed through M-Pesa';
+    case 'completed': return 'Withdrawal completed successfully';
+    case 'failed': return 'Withdrawal failed - please try again';
+    default: return 'Unknown status';
+  }
+}
 
 // Helper function to process referral rewards after activation
 async function processReferralRewards(activatedUserId: number) {
