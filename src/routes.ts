@@ -116,11 +116,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!req.isAuthenticated()) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
+
     try {
       const stats = await storage.getUserStats(req.user.id);
+      
+      // Set headers to prevent caching issues
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
+      
       return res.json(stats);
     } catch (error) {
+      console.error("Error fetching user stats:", error);
       return res.status(500).json({ message: "Failed to get user stats" });
     }
   });
@@ -437,8 +446,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     try {
       const referrals = await storage.getReferralsByReferrerId(req.user.id);
+      console.log(`Found ${referrals.length} referrals for user ${req.user.id}`);
+      
+      // Set headers to prevent caching issues
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
+      
       return res.json(referrals);
     } catch (error) {
+      console.error("Error fetching referrals:", error);
       return res.status(500).json({ message: "Failed to fetch referrals" });
     }
   });
@@ -782,12 +801,93 @@ if (level1Referrer && level1Referrer.referrerId) {
   });
 
   // Get available tasks
-  app.get("/api/available-tasks", async (_req, res) => {
+  app.get("/api/available-tasks", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
     try {
-      const tasks = await storage.getAvailableTasks();
-      return res.json(tasks);
+      // Return mock available tasks for now - you can replace with actual data later
+      const availableTasks = [
+        { 
+          id: 1, 
+          type: "ads", 
+          title: "Watch Advertisement 1", 
+          description: "Watch this ad to earn rewards", 
+          reward: 10, 
+          url: "/videos/ad1.mp4" 
+        },
+        { 
+          id: 2, 
+          type: "ads", 
+          title: "Watch Advertisement 2", 
+          description: "Watch this ad to earn rewards", 
+          reward: 10, 
+          url: "/videos/ad2.mp4" 
+        },
+        { 
+          id: 3, 
+          type: "youtube", 
+          title: "YouTube Video 1", 
+          description: "Watch this YouTube video", 
+          reward: 15, 
+          url: "https://www.youtube.com/embed/jNQXAC9IVRw" 
+        },
+        { 
+          id: 4, 
+          type: "youtube", 
+          title: "YouTube Video 2", 
+          description: "Watch this YouTube video", 
+          reward: 15, 
+          url: "https://www.youtube.com/embed/dQw4w9WgXcQ" 
+        },
+        { 
+          id: 5, 
+          type: "tiktok", 
+          title: "TikTok Video 1", 
+          description: "Watch this TikTok video", 
+          reward: 12, 
+          url: "https://www.tiktok.com/embed/7118919736255810822" 
+        },
+        { 
+          id: 6, 
+          type: "tiktok", 
+          title: "TikTok Video 2", 
+          description: "Watch this TikTok video", 
+          reward: 12, 
+          url: "https://www.tiktok.com/embed/7156867532731331866" 
+        },
+        { 
+          id: 7, 
+          type: "instagram", 
+          title: "Instagram Post 1", 
+          description: "View this Instagram post", 
+          reward: 8, 
+          url: "https://www.instagram.com/p/CukvDC5MMcA/embed" 
+        },
+        { 
+          id: 8, 
+          type: "instagram", 
+          title: "Instagram Post 2", 
+          description: "View this Instagram post", 
+          reward: 8, 
+          url: "https://www.instagram.com/p/CvjsYYSMB2Y/embed" 
+        }
+      ];
+      
+      console.log(`Returning ${availableTasks.length} available tasks`);
+      
+      // Set headers to prevent caching issues
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
+      
+      return res.json(availableTasks);
     } catch (error) {
-      return res.status(500).json({ message: "Failed to get available tasks" });
+      console.error("Error fetching available tasks:", error);
+      return res.status(500).json({ message: "Failed to fetch available tasks" });
     }
   });
 
@@ -1094,22 +1194,7 @@ if (level1Referrer && level1Referrer.referrerId) {
   });
 
   // Get user tasks (completed tasks)
-  app.get("/api/user/tasks", async (req, res) => {
-    if (!req.isAuthenticated()) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    
-    try {
-      const userId = req.user.id;
-      // For now, return empty array - you can implement actual user task tracking
-      const userTasks: any[] = [];
-      
-      return res.json(userTasks);
-    } catch (error) {
-      console.error("Error fetching user tasks:", error);
-      return res.status(500).json({ message: "Failed to fetch user tasks" });
-    }
-  });
+  // Duplicate /api/user/tasks (mock) removed. Real implementation above will be used.
 
   // Complete a task
   app.post("/api/tasks/:taskId/complete", async (req, res) => {
@@ -1214,6 +1299,13 @@ if (level1Referrer && level1Referrer.referrerId) {
         total: allEarnings.reduce((sum, e) => sum + e.amount, 0)
       };
 
+      // Set headers to prevent caching issues
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
+      
       return res.json({ earnings, totals });
     } catch (error) {
       console.error("Error fetching user earnings:", error);
