@@ -1135,6 +1135,40 @@ if (level1Referrer && level1Referrer.referrerId) {
     }
   });
 
+  // Validate referral code endpoint
+  app.get("/api/validate-referral/:code", async (req, res) => {
+    try {
+      const { code } = req.params;
+      
+      if (!code || code.length < 3) {
+        return res.json({ valid: false, message: "Invalid referral code format" });
+      }
+      
+      const referrer = await storage.getUserByReferralCode(code.toUpperCase());
+      
+      if (!referrer) {
+        return res.json({ valid: false, message: "Referral code not found" });
+      }
+      
+      if (!referrer.isActivated) {
+        return res.json({ valid: false, message: "Referrer account is not activated" });
+      }
+      
+      return res.json({
+        valid: true,
+        referrer: {
+          id: referrer.id,
+          username: referrer.username,
+          fullName: referrer.fullName,
+          isActivated: referrer.isActivated
+        }
+      });
+    } catch (error) {
+      console.error("Error validating referral code:", error);
+      return res.status(500).json({ valid: false, message: "Error validating referral code" });
+    }
+  });
+
   // Get user referrals
   app.get("/api/user/referrals", async (req, res) => {
     if (!req.isAuthenticated()) {
@@ -1269,49 +1303,7 @@ if (level1Referrer && level1Referrer.referrerId) {
     }
   });
 
-  // Get user earnings with structured response
-  app.get("/api/user/earnings", async (req, res) => {
-    if (!req.isAuthenticated()) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    
-    try {
-      const userId = req.user.id;
-      const allEarnings = await storage.getEarningsByUserId(userId);
-      
-      // Structure earnings by source
-      const earnings = {
-        referral: allEarnings.filter(e => e.source === 'referral'),
-        ads: allEarnings.filter(e => e.source === 'ad'),
-        youtube: allEarnings.filter(e => e.source === 'youtube'), 
-        tiktok: allEarnings.filter(e => e.source === 'tiktok'),
-        instagram: allEarnings.filter(e => e.source === 'instagram'),
-        all: allEarnings
-      };
 
-      // Calculate totals
-      const totals = {
-        referral: earnings.referral.reduce((sum, e) => sum + e.amount, 0),
-        ads: earnings.ads.reduce((sum, e) => sum + e.amount, 0),
-        youtube: earnings.youtube.reduce((sum, e) => sum + e.amount, 0),
-        tiktok: earnings.tiktok.reduce((sum, e) => sum + e.amount, 0),
-        instagram: earnings.instagram.reduce((sum, e) => sum + e.amount, 0),
-        total: allEarnings.reduce((sum, e) => sum + e.amount, 0)
-      };
-
-      // Set headers to prevent caching issues
-      res.set({
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0'
-      });
-      
-      return res.json({ earnings, totals });
-    } catch (error) {
-      console.error("Error fetching user earnings:", error);
-      return res.status(500).json({ message: "Failed to fetch earnings" });
-    }
-  });
 
   const httpServer = createServer(app);
   return httpServer;

@@ -28,6 +28,8 @@ function generateReferralCode(): string {
 }
 
 export function setupAuth(app: Express): void {
+  const isProduction = process.env.NODE_ENV === 'production';
+  
   const sessionSettings: session.SessionOptions = {
     secret: process.env.SESSION_SECRET || "referral-app-secret",
     resave: false,
@@ -35,8 +37,10 @@ export function setupAuth(app: Express): void {
     store: storage.sessionStore,
     cookie: {
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-      sameSite: 'none',
-      secure: true
+      sameSite: isProduction ? 'none' : 'lax',
+      secure: isProduction, // true in production, false in development
+      httpOnly: true, // Prevent XSS
+      domain: isProduction ? undefined : undefined, // Let browser decide
     }
   };
 

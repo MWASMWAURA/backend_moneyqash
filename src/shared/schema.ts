@@ -186,6 +186,12 @@ export type UserStats = {
     youtube: number;
     instagram: number;
   };
+  taskBalances: {
+    ads: number;
+    tiktok: number;
+    youtube: number;
+    instagram: number;
+  };
 };
 
 // API response types for frontend consumption

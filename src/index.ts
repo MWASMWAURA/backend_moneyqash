@@ -8,17 +8,46 @@ const app = express();
 
 // CORS configuration
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL,
-    'https://www.moneyqash.online',
-    'https://frontend-moneyqash.vercel.app',
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://localhost:4173'
-  ].filter((url): url is string => typeof url === 'string' && url.length > 0),
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Build allowed origins from environment variables
+    const allowedOrigins = [
+      process.env.FRONTEND_URL, // Main frontend URL from env
+      process.env.VITE_APP_URL,  // App URL from env
+      process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null, // Vercel preview URLs
+      'https://www.moneyqash.online',
+      'https://moneyqash.online',
+      'https://frontend-moneyqash.vercel.app',
+      'https://frontend-moneyqash-git-main-muturimwauras-projects.vercel.app',
+      // Development URLs
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'http://localhost:4173'
+    ].filter((url): url is string => typeof url === 'string' && url.length > 0);
+    
+    console.log('CORS checking origin:', origin, 'against allowed:', allowedOrigins);
+    
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    console.log('CORS blocked origin:', origin);
+    const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+    return callback(new Error(msg), false);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With', 
+    'Accept', 
+    'Origin',
+    'Cache-Control',
+    'Pragma'
+  ]
 }));
 
 app.use(express.json());

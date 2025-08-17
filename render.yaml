@@ -22,7 +22,7 @@ services:
       - key: MPESA_PASS_KEY
         sync: false
       - key: MPESA_CALLBACK_URL
-        value: https://your-backend-app.onrender.com/api/mpesa/callback
+        value: https://backend-moneyqash.onrender.com/api/mpesa/callback
       - key: MPESA_ACCOUNT_REFERENCE
         value: MoneyQash
       - key: MPESA_ACTIVATION_FEE
