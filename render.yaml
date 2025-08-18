@@ -27,6 +27,8 @@ services:
         value: MoneyQash
       - key: MPESA_ACTIVATION_FEE
         value: 500
+      - key: FRONTEND_URL
+        value: https://www.moneyqash.online
 
 databases:
   - name: referral-db

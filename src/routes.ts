@@ -114,6 +114,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get user stats
   app.get("/api/user/stats", async (req, res) => {
     if (!req.isAuthenticated()) {
+      console.log('[AUTH DEBUG] /api/user/stats unauthorized. Session ID:', (req.session as any)?.id, 'User:', (req as any).user);
       return res.status(401).json({ message: "Unauthorized" });
     }
 

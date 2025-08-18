@@ -40,9 +40,12 @@ export function setupAuth(app: Express): void {
       sameSite: isProduction ? 'none' : 'lax',
       secure: isProduction, // true in production, false in development
       httpOnly: true, // Prevent XSS
-      domain: isProduction ? undefined : undefined, // Let browser decide
+      // Avoid forcing domain; let browser manage for localhost
     }
   };
+
+  console.log('[SESSION] isProduction:', isProduction);
+  console.log('[SESSION] cookie settings:', sessionSettings.cookie);
 
   app.set("trust proxy", 1);
   app.use(session(sessionSettings));
