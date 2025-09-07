@@ -212,10 +212,13 @@ export function setupAuth(app: Express): void {
       
       req.login(user, (loginErr) => {
         if (loginErr) return next(loginErr);
-        
-        // Return user without password
-        const { password: _, ...userWithoutPassword } = user as Express.User;
-        return res.status(200).json(userWithoutPassword);
+        // Ensure session is saved before sending response
+        req.session.save((saveErr) => {
+          if (saveErr) return next(saveErr);
+          // Return user without password
+          const { password: _, ...userWithoutPassword } = user as Express.User;
+          return res.status(200).json(userWithoutPassword);
+        });
       });
     })(req, res, next);
   });

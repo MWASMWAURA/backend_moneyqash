@@ -177,6 +177,130 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Tasks API endpoints
+  // Get available tasks
+  app.get("/api/available-tasks", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    try {
+      const tasks = await storage.getAvailableTasks();
+      return res.json(tasks);
+    } catch (error) {
+      console.error("Error fetching available tasks:", error);
+      return res.status(500).json({ message: "Failed to get available tasks" });
+    }
+  });
+
+  // Get current user's tasks
+  app.get("/api/user/tasks", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    try {
+      const userId = req.user.id;
+      const tasks = await storage.getTasksByUserId(userId);
+      return res.json(tasks);
+    } catch (error) {
+      console.error("Error fetching user tasks:", error);
+      return res.status(500).json({ message: "Failed to get user tasks" });
+    }
+  });
+
+  // Create a new task instance for the current user
+  app.post("/api/tasks", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const createTaskSchema = z.object({
+      availableTaskId: z.number(),
+      type: z.enum(["ad", "tiktok", "youtube", "instagram"]),
+      amount: z.number().min(0),
+      description: z.string().min(1),
+      duration: z.string().min(1),
+      reward: z.number().min(0),
+    });
+
+    try {
+      const parsed = createTaskSchema.parse(req.body);
+      const userId = req.user.id;
+      const created = await storage.createTask({
+        userId,
+        availableTaskId: parsed.availableTaskId,
+        type: parsed.type,
+        amount: parsed.amount,
+        description: parsed.description,
+        duration: parsed.duration,
+        reward: parsed.reward,
+      } as any);
+      return res.status(201).json(created);
+    } catch (error) {
+      console.error("Error creating task:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.flatten() });
+      }
+      return res.status(500).json({ message: "Failed to create task" });
+    }
+  });
+
+  // Complete a task and award earnings
+  app.post("/api/tasks/:id/complete", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    try {
+      const taskId = Number(req.params.id);
+      if (Number.isNaN(taskId)) {
+        return res.status(400).json({ message: "Invalid task id" });
+      }
+
+      // Ensure task belongs to the current user
+      const userId = req.user.id;
+      const userTasks = await storage.getTasksByUserId(userId);
+      const task = userTasks.find((t) => t.id === taskId);
+      if (!task) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+      if (task.completed) {
+        return res.status(400).json({ message: "Task already completed" });
+      }
+
+      const updated = await storage.completeTask(taskId);
+      if (!updated) {
+        return res.status(500).json({ message: "Failed to complete task" });
+      }
+
+      // Credit earning
+      const amount = updated.amount ?? updated.reward ?? 0;
+      if (amount > 0) {
+        await storage.createEarning({
+          userId,
+          source: updated.type as any,
+          amount,
+          description: updated.description ?? `${updated.type} task reward`,
+        } as any);
+
+        // Update user balances per type
+        const user = await storage.getUser(userId);
+        if (user) {
+          const inc = (curr: number | null | undefined) => (curr || 0) + amount;
+          const balancePatch: any = {};
+          if (updated.type === "ad") balancePatch.adBalance = inc(user.adBalance);
+          if (updated.type === "tiktok") balancePatch.tiktokBalance = inc(user.tiktokBalance);
+          if (updated.type === "youtube") balancePatch.youtubeBalance = inc(user.youtubeBalance);
+          if (updated.type === "instagram") balancePatch.instagramBalance = inc(user.instagramBalance);
+          await storage.updateUser(userId, balancePatch);
+        }
+      }
+
+      return res.json(updated);
+    } catch (error) {
+      console.error("Error completing task:", error);
+      return res.status(500).json({ message: "Failed to complete task" });
+    }
+  });
+
   // Update user profile
   app.patch("/api/user/profile", async (req, res) => {
     if (!req.isAuthenticated()) {

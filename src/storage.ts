@@ -354,10 +354,9 @@ export class DrizzleStorage implements IStorage {
       .filter(e => e.source === 'referral' && e.amount > 0)
       .reduce((acc, curr) => acc + curr.amount, 0);
 
-    // Total profit is account balance (which should reflect referral earnings) + task earnings
-    // Account balance in the user table is primarily for referral commissions.
-    // Task earnings are tracked separately and summed up.
-    const totalProfit = user.accountBalance +
+    // Total profit should be the total earned across time, unaffected by withdrawals.
+    const totalProfit =
+      totalReferralEarnings +
       taskEarnings.ads +
       taskEarnings.tiktok +
       taskEarnings.youtube +
@@ -368,7 +367,7 @@ export class DrizzleStorage implements IStorage {
 
     // Task balances (withdrawable amounts)
     const taskBalances = {
-      ads: user.adBalance || 0,
+      ads: user.adsBalance || 0,
       tiktok: user.tiktokBalance || 0,
       youtube: user.youtubeBalance || 0,
       instagram: user.instagramBalance || 0
@@ -377,6 +376,7 @@ export class DrizzleStorage implements IStorage {
     return {
       accountBalance: user.accountBalance,
       totalProfit,
+      totalReferralEarnings,
       directReferrals,
       secondaryReferrals,
       referralLink,
